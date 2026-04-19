@@ -1,0 +1,1 @@
+"""MagicTap Kids backend package."""
