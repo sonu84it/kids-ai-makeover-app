@@ -65,3 +65,30 @@ class WorkerProcessResult(BaseModel):
     status: JobStatus
     result_path: str | None = None
     error_code: str | None = None
+
+
+class ImageAssetQueryRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    prefix: str | None = Field(default=None, max_length=1024)
+    limit: int = Field(default=25, ge=1, le=200)
+    include_signed_urls: bool = Field(default=False, alias="includeSignedUrls", serialization_alias="includeSignedUrls")
+
+
+class ImageAssetRecord(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    uri: str
+    bucket_name: str = Field(alias="bucketName", serialization_alias="bucketName")
+    object_path: str = Field(alias="objectPath", serialization_alias="objectPath")
+    content_type: str | None = Field(default=None, alias="contentType", serialization_alias="contentType")
+    size: int | None = None
+    generation: int | None = None
+    signed_url: str | None = Field(default=None, alias="signedUrl", serialization_alias="signedUrl")
+
+
+class ImageAssetQueryResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    sql: str
+    rows: list[ImageAssetRecord]

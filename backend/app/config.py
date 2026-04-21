@@ -10,6 +10,9 @@ class Settings(BaseSettings):
 
     google_cloud_project: str = Field(default="local-project", alias="GOOGLE_CLOUD_PROJECT")
     google_cloud_location: str = Field(default="us-central1", alias="GOOGLE_CLOUD_LOCATION")
+    bigquery_project: str = Field(default="", alias="BIGQUERY_PROJECT")
+    bigquery_location: str = Field(default="", alias="BIGQUERY_LOCATION")
+    bigquery_object_table: str = Field(default="", alias="BIGQUERY_OBJECT_TABLE")
     upload_bucket: str = Field(default="", alias="UPLOAD_BUCKET")
     result_bucket: str = Field(default="", alias="RESULT_BUCKET")
     vertex_imagen_model: str = Field(default="imagen-3.0-capability-001", alias="VERTEX_IMAGEN_MODEL")
@@ -24,6 +27,14 @@ class Settings(BaseSettings):
     @property
     def effective_result_bucket(self) -> str:
         return self.result_bucket or self.upload_bucket
+
+    @property
+    def effective_bigquery_project(self) -> str:
+        return self.bigquery_project or self.google_cloud_project
+
+    @property
+    def effective_bigquery_location(self) -> str:
+        return self.bigquery_location or self.google_cloud_location
 
     @property
     def max_upload_bytes(self) -> int:

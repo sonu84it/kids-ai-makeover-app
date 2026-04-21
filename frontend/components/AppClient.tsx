@@ -36,10 +36,10 @@ export function AppClient() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [presetId, setPresetId] = useState<PresetId | null>("superhero");
+  const [presetId, setPresetId] = useState<PresetId | null>(null);
   const [job, setJob] = useState<JobResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [uploadState, setUploadState] = useState<"idle" | "uploading" | "uploaded" | "submitting">("idle");
+  const [uploadState, setUploadState] = useState<"idle" | "signing" | "uploading" | "creating" | "polling">("idle");
 
   useEffect(() => {
     if (!file) {
@@ -56,10 +56,14 @@ export function AppClient() {
       return;
     }
     const interval = window.setInterval(async () => {
-      const next = await getJob(job.jobId);
-      setJob(next);
-      if (next.status === "completed") {
-        router.push(`/jobs/${next.jobId}`);
+      try {
+        const next = await getJob(job.jobId);
+        setJob(next);
+        if (next.status === "completed") {
+          router.push(`/jobs/${next.jobId}`);
+        }
+      } catch (pollError) {
+        setError(pollError instanceof Error ? pollError.message : "Unable to load the latest job status.");
       }
     }, 2500);
     return () => window.clearInterval(interval);
@@ -75,12 +79,14 @@ export function AppClient() {
     }
     try {
       setError(null);
-      setUploadState("uploading");
+      setJob(null);
+      setUploadState("signing");
       const signed = await signUpload(file);
+      setUploadState("uploading");
       await uploadFile(signed.uploadUrl, file);
-      setUploadState("uploaded");
+      setUploadState("creating");
       const createdJob = await createMakeover(signed.jobId, presetId);
-      setUploadState("submitting");
+      setUploadState("polling");
       setJob(createdJob);
       if (createdJob.status === "completed") {
         router.push(`/jobs/${createdJob.jobId}`);
@@ -98,7 +104,7 @@ export function AppClient() {
     await deleteJob(job.jobId);
     setJob(null);
     setFile(null);
-    setPresetId("superhero");
+    setPresetId(null);
     setUploadState("idle");
   }
 
@@ -106,11 +112,18 @@ export function AppClient() {
     if (!nextFile) {
       return;
     }
+    const normalizedType = nextFile.type.toLowerCase();
+    if (normalizedType && !["image/jpeg", "image/jpg", "image/png", "image/webp"].includes(normalizedType)) {
+      setError("This image format is not supported on MagicTap Kids yet. Please use JPG, PNG, or WEBP.");
+      return;
+    }
     if (nextFile.size > 10 * 1024 * 1024) {
       setError("File is too large. Please select an image under 10MB.");
       return;
     }
     setError(null);
+    setJob(null);
+    setUploadState("idle");
     setFile(nextFile);
   }
 
@@ -141,47 +154,12 @@ export function AppClient() {
         </div>
 
         <div className="glass-panel p-6">
-          <p className="text-sm font-bold uppercase tracking-[0.24em] text-gray-400">Live job state</p>
-          <div className="mt-6 grid gap-4">
-            {[
-              { label: "Signed upload", done: uploadState !== "idle" },
-              { label: "Image stored", done: uploadState === "uploaded" || uploadState === "submitting" || !!job },
-              { label: "Worker running", done: job?.status === "processing" || job?.status === "completed" },
-              { label: "Result ready", done: job?.status === "completed" }
-            ].map((stage) => (
-              <div
-                key={stage.label}
-                className={`flex items-center justify-between rounded-2xl border px-4 py-4 transition-all ${
-                  stage.done ? "border-indigo-200 bg-indigo-600 text-white shadow-lg shadow-indigo-500/20" : "border-gray-100 bg-white text-gray-500"
-                }`}
-              >
-                <span className="font-bold">{stage.label}</span>
-                <span className="text-sm font-semibold">{stage.done ? "Done" : "Waiting"}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-6 rounded-[28px] border border-gray-100 bg-white p-5">
-            <div className="flex items-center gap-3">
-              <div className={`rounded-2xl border p-3 ${activePreset.borderClassName} ${activePreset.chipClassName}`}>
-                {(() => {
-                  const Icon = ICONS[activePreset.iconKey];
-                  return <Icon size={22} />;
-                })()}
-              </div>
-              <div>
-                <p className="text-xs font-bold uppercase tracking-[0.22em] text-gray-400">Current style</p>
-                <p className="text-lg font-extrabold text-gray-900">{activePreset.label}</p>
-              </div>
-            </div>
-            <p className="mt-4 text-sm font-medium leading-7 text-gray-600">
-              {job?.status === "processing"
-                ? "Our worker is preparing and editing the image now."
-                : job?.status === "completed"
-                  ? "Your makeover is ready to preview."
-                  : job?.status === "failed"
-                    ? `This image could not be processed${job.errorCode ? `: ${job.errorCode}` : "."}`
-                    : "Upload a photo, choose a style, and start the makeover flow."}
+          <p className="text-sm font-bold uppercase tracking-[0.24em] text-gray-400">Trust note</p>
+          <div className="mt-5 rounded-[28px] border border-gray-100 bg-white p-5">
+            <p className="text-lg font-extrabold text-gray-900">Preset-only experience for parents and guardians</p>
+            <p className="mt-3 text-sm font-medium leading-7 text-gray-600">
+              Upload one photo, choose a style, then explicitly click Generate Magic. We preserve child identity and skin tone,
+              avoid adultification, and keep the experience firmly preset-driven.
             </p>
           </div>
         </div>
@@ -305,18 +283,26 @@ export function AppClient() {
             ) : null}
 
             <p className="text-sm font-medium leading-7 text-gray-600">
-              We preserve child identity and skin tone, avoid adultification, and keep the experience firmly preset-driven.
+              {presetId
+                ? `Selected style: ${activePreset.label}. Click Generate Magic to start processing.`
+                : "Choose one of the five preset styles before generating the makeover."}
             </p>
             <button
               type="button"
               onClick={handleGenerate}
-              disabled={!canGenerate || uploadState === "uploading" || uploadState === "submitting"}
+              disabled={!canGenerate || uploadState !== "idle"}
               className="group mt-6 flex w-full items-center justify-center gap-3 rounded-2xl bg-indigo-600 px-6 py-5 text-lg font-extrabold text-white shadow-xl shadow-indigo-500/25 transition-all hover:bg-indigo-700 hover:shadow-indigo-500/35 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400 disabled:shadow-none"
             >
-              {uploadState === "uploading" || uploadState === "submitting" ? (
+              {uploadState !== "idle" ? (
                 <>
                   <Loader2 size={22} className="animate-spin" />
-                  Working...
+                  {uploadState === "signing"
+                    ? "Starting upload..."
+                    : uploadState === "uploading"
+                      ? "Uploading..."
+                      : uploadState === "creating"
+                        ? "Creating job..."
+                        : "Waiting for worker..."}
                 </>
               ) : (
                 <>
@@ -332,6 +318,60 @@ export function AppClient() {
               <Link href="/terms" className="transition-colors hover:text-gray-900">
                 Terms
               </Link>
+            </div>
+          </div>
+
+          <div className="glass-panel p-6">
+            <p className="text-sm font-bold uppercase tracking-[0.24em] text-gray-400">Live job state</p>
+            <div className="mt-6 grid gap-4">
+              {[
+                { label: "Signed upload", done: uploadState !== "idle" },
+                { label: "Image stored", done: uploadState === "creating" || uploadState === "polling" || !!job },
+                { label: "Worker running", done: job?.status === "processing" || job?.status === "completed" },
+                { label: "Result ready", done: job?.status === "completed" }
+              ].map((stage) => (
+                <div
+                  key={stage.label}
+                  className={`flex items-center justify-between rounded-2xl border px-4 py-4 transition-all ${
+                    stage.done ? "border-indigo-200 bg-indigo-600 text-white shadow-lg shadow-indigo-500/20" : "border-gray-100 bg-white text-gray-500"
+                  }`}
+                >
+                  <span className="font-bold">{stage.label}</span>
+                  <span className="text-sm font-semibold">{stage.done ? "Done" : "Waiting"}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-6 rounded-[28px] border border-gray-100 bg-white p-5">
+              <div className="flex items-center gap-3">
+                <div className={`rounded-2xl border p-3 ${activePreset.borderClassName} ${activePreset.chipClassName}`}>
+                  {(() => {
+                    const Icon = ICONS[activePreset.iconKey];
+                    return <Icon size={22} />;
+                  })()}
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.22em] text-gray-400">Current style</p>
+                  <p className="text-lg font-extrabold text-gray-900">{presetId ? activePreset.label : "Not selected yet"}</p>
+                </div>
+              </div>
+              <p className="mt-4 text-sm font-medium leading-7 text-gray-600">
+                {job?.status === "processing"
+                  ? "Our worker is preparing and editing the image now."
+                  : job?.status === "completed"
+                    ? "Your makeover is ready to preview."
+                    : job?.status === "failed"
+                      ? `This image could not be processed${job.errorCode ? `: ${job.errorCode}` : "."}`
+                      : uploadState === "signing"
+                        ? "Creating a secure upload session."
+                        : uploadState === "uploading"
+                          ? "Uploading the image to secure storage."
+                          : uploadState === "creating"
+                            ? "Creating your makeover job."
+                            : uploadState === "polling"
+                              ? "Waiting for the worker to pick up the uploaded photo."
+                              : "Upload a photo, choose a style, and start the makeover flow."}
+              </p>
             </div>
           </div>
 

@@ -1,13 +1,30 @@
 import Link from "next/link";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { ChevronRight, ShieldCheck } from "lucide-react";
 
 import { BeforeAfterSlider } from "@/components/BeforeAfterSlider";
 import { ErrorStateCard } from "@/components/ErrorStateCard";
-import { apiUrl } from "@/lib/api";
+import { ResultActions } from "@/components/ResultActions";
 import { JobResponse } from "@/lib/types";
 
+function getServerApiUrl(path: string, headerList: Headers): string {
+  const configuredBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL;
+  if (configuredBaseUrl) {
+    return `${configuredBaseUrl}${path}`;
+  }
+
+  const protocol = headerList.get("x-forwarded-proto") ?? "https";
+  const host = headerList.get("x-forwarded-host") ?? headerList.get("host");
+  if (!host) {
+    throw new Error("missing_host_header");
+  }
+  return `${protocol}://${host}/api${path}`;
+}
+
 async function loadJob(jobId: string): Promise<JobResponse | null> {
-  const response = await fetch(apiUrl(`/v1/makeovers/${jobId}`), { cache: "no-store" });
+  const headerList = headers();
+  const response = await fetch(getServerApiUrl(`/v1/makeovers/${jobId}`, headerList), { cache: "no-store" });
   if (!response.ok) {
     return null;
   }
@@ -18,11 +35,7 @@ export default async function JobPage({ params }: { params: { jobId: string } })
   const job = await loadJob(params.jobId);
 
   if (!job) {
-    return (
-      <div className="mx-auto max-w-4xl px-6 py-12">
-        <ErrorStateCard message="This makeover job could not be found." />
-      </div>
-    );
+    redirect("/app");
   }
 
   return (
@@ -43,7 +56,10 @@ export default async function JobPage({ params }: { params: { jobId: string } })
       </div>
 
       {job.status === "completed" && job.sourceDownloadUrl && job.resultDownloadUrl ? (
-        <BeforeAfterSlider beforeUrl={job.sourceDownloadUrl} afterUrl={job.resultDownloadUrl} presetLabel={job.presetId ?? undefined} />
+        <>
+          <BeforeAfterSlider beforeUrl={job.sourceDownloadUrl} afterUrl={job.resultDownloadUrl} presetLabel={job.presetId ?? undefined} />
+          <ResultActions jobId={job.jobId} />
+        </>
       ) : null}
 
       {job.status === "failed" ? (

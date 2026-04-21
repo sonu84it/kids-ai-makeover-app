@@ -19,3 +19,24 @@ export interface JobResponse {
   sourceDownloadUrl: string | null;
   resultDownloadUrl: string | null;
 }
+
+export interface AssetQueryRequest {
+  prefix?: string;
+  limit?: number;
+  includeSignedUrls?: boolean;
+}
+
+export interface AssetRecord {
+  uri: string;
+  bucketName: string;
+  objectPath: string;
+  contentType: string | null;
+  size: number | null;
+  generation: number | null;
+  signedUrl: string | null;
+}
+
+export interface AssetQueryResponse {
+  sql: string;
+  rows: AssetRecord[];
+}

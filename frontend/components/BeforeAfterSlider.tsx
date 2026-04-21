@@ -24,9 +24,9 @@ export function BeforeAfterSlider({ beforeUrl, afterUrl, presetLabel }: BeforeAf
       </div>
 
       <div className="relative aspect-[4/3] overflow-hidden rounded-[30px] border border-gray-100 bg-gray-900">
-        <img src={beforeUrl} alt="Before makeover" className="absolute inset-0 h-full w-full object-contain" />
+        <img src={afterUrl} alt="After makeover" className="absolute inset-0 h-full w-full object-cover" />
         <div className="absolute inset-0 overflow-hidden" style={{ width: `${position}%` }}>
-          <img src={afterUrl} alt="After makeover" className="h-full w-full object-cover" />
+          <img src={beforeUrl} alt="Before makeover" className="h-full w-full object-contain" />
         </div>
         <div className="absolute inset-y-0" style={{ left: `calc(${position}% - 1px)` }}>
           <div className="relative h-full w-0.5 bg-white shadow-[0_0_0_1px_rgba(18,36,58,0.2)]">

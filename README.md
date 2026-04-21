@@ -95,12 +95,33 @@ Object layout:
 - `results/{jobId}/final.png`
 - `jobs/{jobId}.json`
 
+For browser-based direct uploads, apply a bucket CORS policy that allows `PUT` from your frontend origin:
+
+```bash
+cd infra
+export UPLOAD_BUCKET=your-bucket-name
+bash ./apply_bucket_cors.sh
+```
+
+The sample CORS policy in [infra/storage-cors.json](/Users/sonu/Documents/kids-ai-makeover-app/infra/storage-cors.json:1) includes both local development and the current Cloud Run web origin. Update the origin list before deploying to a different frontend hostname.
+
+### Optional BigQuery image lookup
+
+To query Cloud Storage image metadata with BigQuery SQL, create a BigQuery object table over your image bucket. Google documents object tables as metadata indexes over Cloud Storage objects with fixed columns such as `uri`, `content_type`, `size`, and `generation`.
+
+Sample SQL template:
+
+- [infra/create_bigquery_object_table.sql](/Users/sonu/Documents/kids-ai-makeover-app/infra/create_bigquery_object_table.sql:1)
+
 ### Environment variables
 
 Backend:
 
 - `GOOGLE_CLOUD_PROJECT`
 - `GOOGLE_CLOUD_LOCATION`
+- `BIGQUERY_PROJECT`
+- `BIGQUERY_LOCATION`
+- `BIGQUERY_OBJECT_TABLE`
 - `UPLOAD_BUCKET`
 - `RESULT_BUCKET`
 - `VERTEX_IMAGEN_MODEL`
@@ -120,6 +141,15 @@ Frontend:
 cd infra
 source ./backend.env.example
 bash ./deploy_api.sh
+```
+
+When the API runs on Cloud Run, signed URL generation uses the service account identity through IAM signing. Grant the API service account permission to sign blobs on itself:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding \
+  "magictap-api-sa@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com" \
+  --member="serviceAccount:magictap-api-sa@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountTokenCreator"
 ```
 
 ### Worker service
@@ -200,6 +230,39 @@ Response:
 
 Deletes the source asset, generated output, and job metadata while marking the job as deleted.
 
+### `POST /v1/assets:query`
+
+Queries image objects from a configured BigQuery object table using backend-generated SQL.
+
+Request:
+
+```json
+{
+  "prefix": "gs://magictap-kids-prod-assets/results/",
+  "limit": 25,
+  "includeSignedUrls": true
+}
+```
+
+Response:
+
+```json
+{
+  "sql": "SELECT uri, content_type, size, generation FROM `magictap-kids-prod.media.object_assets` ...",
+  "rows": [
+    {
+      "uri": "gs://magictap-kids-prod-assets/results/job-123/final.png",
+      "bucketName": "magictap-kids-prod-assets",
+      "objectPath": "results/job-123/final.png",
+      "contentType": "image/png",
+      "size": 482913,
+      "generation": 1713629600000000,
+      "signedUrl": "https://storage.googleapis.com/..."
+    }
+  ]
+}
+```
+
 ## Notes on Vertex AI integration
 
 - Provider-specific code is isolated in `backend/app/services/vertex_imagen.py`
@@ -227,7 +290,7 @@ cd backend
 pytest
 ```
 
-Current test coverage focuses on deterministic preset mapping and storage path behavior.
+Current test coverage focuses on deterministic preset mapping, storage path behavior, and the BigQuery image-query SQL builder.
 
 ## Known limitations
 
@@ -243,3 +306,9 @@ Current test coverage focuses on deterministic preset mapping and storage path b
 - Introduce stronger image quality checks and face-position guidance before upload
 - Add visual regression tests and contract tests around the API
 - Add optional internal-only experimentation with Gemini image flows while keeping Imagen as the primary production path
+- Add authenticated admin search over BigQuery object tables and join image metadata with job records
+
+## References
+
+- BigQuery object tables overview: [Google Cloud documentation](https://docs.cloud.google.com/bigquery/docs/object-table-introduction)
+- Create object tables: [Google Cloud documentation](https://cloud.google.com/bigquery/docs/object-tables)

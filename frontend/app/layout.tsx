@@ -33,6 +33,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
                   <Link href="/app" className="transition-colors hover:text-gray-900">
                     App
                   </Link>
+                  <Link href="/debug/assets" className="transition-colors hover:text-gray-900">
+                    Assets
+                  </Link>
                   <Link href="/privacy" className="transition-colors hover:text-gray-900">
                     Privacy
                   </Link>
