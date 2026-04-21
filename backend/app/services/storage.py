@@ -10,6 +10,7 @@ import google.auth
 import google.auth.credentials
 from google.cloud import storage
 from google.auth.transport.requests import Request as GoogleAuthRequest
+import requests
 
 from app.config import Settings
 from app.models.schemas import JobRecord
@@ -56,7 +57,7 @@ class StorageService:
         if isinstance(credentials, google.auth.credentials.Signing):
             return {"credentials": credentials}
 
-        service_account_email = getattr(credentials, "service_account_email", None)
+        service_account_email = self._resolve_service_account_email(credentials)
         if not service_account_email:
             raise RuntimeError("service_account_email_unavailable")
 
@@ -68,6 +69,26 @@ class StorageService:
             "service_account_email": service_account_email,
             "access_token": credentials.token,
         }
+
+    def _resolve_service_account_email(self, credentials: google.auth.credentials.Credentials) -> str | None:
+        service_account_email = getattr(credentials, "service_account_email", None)
+        if service_account_email and service_account_email != "default":
+            return service_account_email
+
+        try:
+            response = requests.get(
+                "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email",
+                headers={"Metadata-Flavor": "Google"},
+                timeout=2,
+            )
+            if response.ok:
+                email = response.text.strip()
+                if email:
+                    return email
+        except requests.RequestException:
+            return None
+
+        return None
 
     def write_job(self, job: JobRecord) -> JobRecord:
         payload = job.model_dump(mode="json")
