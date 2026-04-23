@@ -28,15 +28,23 @@ class VertexImagenService:
         if self.settings.enable_mock_ai:
             return self._mock_edit(image_bytes, instruction)
         try:
+            if self.settings.image_provider.lower() == "gemini":
+                return self._call_gemini_image(image_bytes, instruction)
             return self._call_vertex_imagen(image_bytes, instruction, mask_bytes)
         except VertexImagenError as exc:
             logger.warning(
-                "vertex_imagen_fallback_to_mock code=%s model=%s message=%s",
+                "vertex_image_fallback_to_mock provider=%s code=%s model=%s message=%s",
+                self.settings.image_provider,
                 exc.code,
-                self.settings.vertex_imagen_model,
+                self._active_model_name(),
                 str(exc)[:500],
             )
             return self._mock_edit(image_bytes, instruction)
+
+    def _active_model_name(self) -> str:
+        if self.settings.image_provider.lower() == "gemini":
+            return self.settings.gemini_image_model
+        return self.settings.vertex_imagen_model
 
     def _call_vertex_imagen(self, image_bytes: bytes, instruction: str, mask_bytes: bytes | None) -> bytes:
         credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
@@ -127,6 +135,87 @@ class VertexImagenService:
 
         raise last_error or VertexImagenError("vertex_request_failed", "Vertex AI request failed.")
 
+    def _call_gemini_image(self, image_bytes: bytes, instruction: str) -> bytes:
+        credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        session = AuthorizedSession(credentials)
+        location = self.settings.gemini_image_location
+        model = self.settings.gemini_image_model
+        url = (
+            f"https://{location}-aiplatform.googleapis.com/v1/projects/"
+            f"{self.settings.google_cloud_project}/locations/{location}/publishers/google/models/{model}:generateContent"
+        )
+
+        mime_type = self._detect_image_mime_type(image_bytes)
+        payload = {
+            "contents": [
+                {
+                    "role": "USER",
+                    "parts": [
+                        {
+                            "text": (
+                                "Edit the uploaded child photo according to the following preset instruction. "
+                                "Preserve the child's identity, face, skin tone, age-appropriate appearance, "
+                                "and overall pose. Apply visible costume and scene changes that match the preset. "
+                                "Return only the edited image.\n\n"
+                                f"{instruction}"
+                            )
+                        },
+                        {
+                            "inlineData": {
+                                "mimeType": mime_type,
+                                "data": base64.b64encode(image_bytes).decode("utf-8"),
+                            }
+                        },
+                    ],
+                }
+            ],
+            "generationConfig": {
+                "responseModalities": ["IMAGE"],
+                "candidateCount": 1,
+                "temperature": 0.6,
+                "topP": 0.95,
+            },
+        }
+
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                response = session.post(url, json=payload, timeout=180)
+            except RequestException as exc:
+                last_error = VertexImagenError("gemini_request_failed", str(exc))
+                logger.warning(
+                    "gemini_image_transport_failed attempt=%s model=%s message=%s",
+                    attempt + 1,
+                    model,
+                    str(exc)[:500],
+                )
+                time.sleep(2**attempt)
+                continue
+            if response.ok:
+                body = response.json()
+                encoded = self._extract_gemini_inline_image(body)
+                if encoded:
+                    return base64.b64decode(encoded)
+                logger.warning(
+                    "gemini_image_response_parse_failed model=%s body=%s",
+                    model,
+                    json.dumps(body)[:1000].replace("\n", " "),
+                )
+                raise VertexImagenError("gemini_bad_response", "Gemini did not return image bytes.")
+
+            response_excerpt = response.text[:1000].replace("\n", " ")
+            last_error = VertexImagenError("gemini_request_failed", response_excerpt)
+            logger.warning(
+                "gemini_image_request_failed attempt=%s status_code=%s model=%s body=%s",
+                attempt + 1,
+                response.status_code,
+                model,
+                response_excerpt,
+            )
+            time.sleep(2**attempt)
+
+        raise last_error or VertexImagenError("gemini_request_failed", "Gemini image request failed.")
+
     def _extract_image_bytes(self, payload: object) -> str | None:
         if isinstance(payload, dict):
             direct = payload.get("bytesBase64Encoded")
@@ -165,6 +254,42 @@ class VertexImagenService:
                     return nested
 
         return None
+
+    def _extract_gemini_inline_image(self, payload: object) -> str | None:
+        if isinstance(payload, dict):
+            inline_data = payload.get("inlineData")
+            if isinstance(inline_data, dict):
+                data = inline_data.get("data")
+                if isinstance(data, str) and data:
+                    return data
+
+            inline_data = payload.get("inline_data")
+            if isinstance(inline_data, dict):
+                data = inline_data.get("data")
+                if isinstance(data, str) and data:
+                    return data
+
+            for value in payload.values():
+                nested = self._extract_gemini_inline_image(value)
+                if nested:
+                    return nested
+
+        if isinstance(payload, list):
+            for item in payload:
+                nested = self._extract_gemini_inline_image(item)
+                if nested:
+                    return nested
+
+        return None
+
+    def _detect_image_mime_type(self, image_bytes: bytes) -> str:
+        if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png"
+        if image_bytes.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
+            return "image/webp"
+        return "image/jpeg"
 
     def _mock_edit(self, image_bytes: bytes, instruction: str) -> bytes:
         image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")

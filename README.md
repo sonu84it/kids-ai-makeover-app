@@ -124,7 +124,10 @@ Backend:
 - `BIGQUERY_OBJECT_TABLE`
 - `UPLOAD_BUCKET`
 - `RESULT_BUCKET`
+- `IMAGE_PROVIDER`
 - `VERTEX_IMAGEN_MODEL`
+- `GEMINI_IMAGE_MODEL`
+- `GEMINI_IMAGE_LOCATION`
 - `SIGNED_URL_EXPIRY_SECONDS`
 - `ENABLE_MOCK_AI`
 - `MAX_UPLOAD_MB`
@@ -268,7 +271,9 @@ Response:
 - Provider-specific code is isolated in `backend/app/services/vertex_imagen.py`
 - The worker applies lightweight preprocessing before editing
 - Presets are deterministic and mapped internally in `backend/app/services/policy.py`
-- The default model value is `imagen-3.0-capability-001`, but it is environment-configurable
+- The default provider is `imagen` with model `imagen-3.0-capability-001`
+- You can switch to `gemini` with model `gemini-2.5-flash-image` for image understanding plus image editing/generation
+- Provider choice is controlled with `IMAGE_PROVIDER=imagen|gemini`
 
 ## Privacy and trust UX
 
@@ -305,7 +310,7 @@ Current test coverage focuses on deterministic preset mapping, storage path beha
 - Add lifecycle rules to auto-expire raw uploads and generated assets
 - Introduce stronger image quality checks and face-position guidance before upload
 - Add visual regression tests and contract tests around the API
-- Add optional internal-only experimentation with Gemini image flows while keeping Imagen as the primary production path
+- Compare Imagen and Gemini image quality per preset and route traffic with a provider flag
 - Add authenticated admin search over BigQuery object tables and join image metadata with job records
 
 ## References
