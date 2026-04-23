@@ -34,6 +34,7 @@ const ICONS = {
 export function AppClient() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const generateInFlightRef = useRef(false);
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [presetId, setPresetId] = useState<PresetId | null>(null);
@@ -77,7 +78,11 @@ export function AppClient() {
       setError("Please upload one image and choose a preset style.");
       return;
     }
+    if (generateInFlightRef.current) {
+      return;
+    }
     try {
+      generateInFlightRef.current = true;
       setError(null);
       setJob(null);
       setUploadState("signing");
@@ -94,6 +99,8 @@ export function AppClient() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to create makeover.");
       setUploadState("idle");
+    } finally {
+      generateInFlightRef.current = false;
     }
   }
 
@@ -124,6 +131,7 @@ export function AppClient() {
     setError(null);
     setJob(null);
     setUploadState("idle");
+    generateInFlightRef.current = false;
     setFile(nextFile);
   }
 
