@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     signed_url_expiry_seconds: int = Field(default=900, alias="SIGNED_URL_EXPIRY_SECONDS")
     job_url_expiry_seconds: int = Field(default=900, alias="JOB_URL_EXPIRY_SECONDS")
     enable_mock_ai: bool = Field(default=True, alias="ENABLE_MOCK_AI")
+    allow_ai_fallback_preview: bool = Field(default=False, alias="ALLOW_AI_FALLBACK_PREVIEW")
     max_upload_mb: int = Field(default=10, alias="MAX_UPLOAD_MB")
     local_data_dir: Path = Field(default=Path("./data"), alias="LOCAL_DATA_DIR")
     max_image_dimension: int = Field(default=1536, alias="MAX_IMAGE_DIMENSION")

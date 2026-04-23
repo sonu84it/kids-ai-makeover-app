@@ -35,13 +35,16 @@ class VertexImagenService:
             return self._call_vertex_imagen(image_bytes, instruction, mask_bytes)
         except VertexImagenError as exc:
             logger.warning(
-                "vertex_image_fallback_to_mock provider=%s code=%s model=%s message=%s",
+                "vertex_image_provider_failed provider=%s code=%s model=%s fallback_enabled=%s message=%s",
                 self.settings.image_provider,
                 exc.code,
                 self._active_model_name(),
+                self.settings.allow_ai_fallback_preview,
                 str(exc)[:500],
             )
-            return self._mock_edit(image_bytes, instruction)
+            if self.settings.allow_ai_fallback_preview:
+                return self._mock_edit(image_bytes, instruction)
+            raise
 
     def _active_model_name(self) -> str:
         if self.settings.image_provider.lower() == "gemini":
@@ -180,10 +183,12 @@ class VertexImagenService:
             if encoded:
                 return base64.b64decode(encoded)
 
+            response_summary = self._summarize_gemini_response(response)
             body = response.model_dump(mode="json") if hasattr(response, "model_dump") else response
             logger.warning(
-                "gemini_image_response_parse_failed model=%s body=%s",
+                "gemini_image_response_parse_failed model=%s summary=%s body=%s",
                 self.settings.gemini_image_model,
+                json.dumps(response_summary),
                 json.dumps(body)[:1000].replace("\n", " "),
             )
             last_error = VertexImagenError("gemini_bad_response", "Gemini did not return image bytes.")
@@ -231,6 +236,27 @@ class VertexImagenService:
         return None
 
     def _extract_gemini_inline_image(self, payload: object) -> str | None:
+        parts = getattr(payload, "parts", None)
+        if parts:
+            for part in parts:
+                inline_data = getattr(part, "inline_data", None)
+                data = getattr(inline_data, "data", None)
+                if data:
+                    return base64.b64encode(data).decode("utf-8") if isinstance(data, bytes) else data
+
+        candidates = getattr(payload, "candidates", None)
+        if candidates:
+            for candidate in candidates:
+                nested = self._extract_gemini_inline_image(candidate)
+                if nested:
+                    return nested
+
+        content = getattr(payload, "content", None)
+        if content:
+            nested = self._extract_gemini_inline_image(content)
+            if nested:
+                return nested
+
         if isinstance(payload, dict):
             inline_data = payload.get("inlineData")
             if isinstance(inline_data, dict):
@@ -256,6 +282,43 @@ class VertexImagenService:
                     return nested
 
         return None
+
+    def _summarize_gemini_response(self, payload: object) -> dict[str, object]:
+        summary: dict[str, object] = {
+            "has_candidates_attr": bool(getattr(payload, "candidates", None)),
+            "parts": [],
+        }
+        parts = getattr(payload, "parts", None)
+        if parts:
+            for part in parts:
+                summary["parts"].append(
+                    {
+                        "has_text": bool(getattr(part, "text", None)),
+                        "has_inline_data": bool(getattr(part, "inline_data", None)),
+                        "inline_mime_type": getattr(getattr(part, "inline_data", None), "mime_type", None),
+                    }
+                )
+        candidates = getattr(payload, "candidates", None)
+        if candidates:
+            candidate_summaries = []
+            for candidate in candidates[:3]:
+                content = getattr(candidate, "content", None)
+                content_parts = getattr(content, "parts", None) if content else None
+                candidate_summaries.append(
+                    {
+                        "has_content": bool(content),
+                        "parts": [
+                            {
+                                "has_text": bool(getattr(part, "text", None)),
+                                "has_inline_data": bool(getattr(part, "inline_data", None)),
+                                "inline_mime_type": getattr(getattr(part, "inline_data", None), "mime_type", None),
+                            }
+                            for part in (content_parts or [])
+                        ],
+                    }
+                )
+            summary["candidates"] = candidate_summaries
+        return summary
 
     def _detect_image_mime_type(self, image_bytes: bytes) -> str:
         if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
