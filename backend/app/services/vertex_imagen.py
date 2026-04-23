@@ -5,9 +5,11 @@ import logging
 import time
 
 import google.auth
+from google import genai
 from google.auth.transport.requests import AuthorizedSession
 from requests import RequestException
 from PIL import Image, ImageDraw, ImageFont
+from google.genai.types import GenerateContentConfig, Modality
 
 from app.config import Settings
 
@@ -136,82 +138,55 @@ class VertexImagenService:
         raise last_error or VertexImagenError("vertex_request_failed", "Vertex AI request failed.")
 
     def _call_gemini_image(self, image_bytes: bytes, instruction: str) -> bytes:
-        credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-        session = AuthorizedSession(credentials)
-        location = self.settings.gemini_image_location
-        model = self.settings.gemini_image_model
-        url = (
-            f"https://{location}-aiplatform.googleapis.com/v1/projects/"
-            f"{self.settings.google_cloud_project}/locations/{location}/publishers/google/models/{model}:generateContent"
+        client = genai.Client(
+            vertexai=True,
+            project=self.settings.google_cloud_project,
+            location=self.settings.gemini_image_location,
         )
-
-        mime_type = self._detect_image_mime_type(image_bytes)
-        payload = {
-            "contents": [
-                {
-                    "role": "USER",
-                    "parts": [
-                        {
-                            "text": (
-                                "Edit the uploaded child photo according to the following preset instruction. "
-                                "Preserve the child's identity, face, skin tone, age-appropriate appearance, "
-                                "and overall pose. Apply visible costume and scene changes that match the preset. "
-                                "Return only the edited image.\n\n"
-                                f"{instruction}"
-                            )
-                        },
-                        {
-                            "inlineData": {
-                                "mimeType": mime_type,
-                                "data": base64.b64encode(image_bytes).decode("utf-8"),
-                            }
-                        },
-                    ],
-                }
-            ],
-            "generationConfig": {
-                "responseModalities": ["IMAGE"],
-                "candidateCount": 1,
-                "temperature": 0.6,
-                "topP": 0.95,
-            },
-        }
+        prompt = (
+            "Edit the uploaded child photo according to the following preset instruction. "
+            "Preserve the child's identity, face, skin tone, age-appropriate appearance, "
+            "and overall pose. Apply visible costume and scene changes that match the preset. "
+            "Return an edited image response.\n\n"
+            f"{instruction}"
+        )
+        source_image = Image.open(io.BytesIO(image_bytes))
 
         last_error: Exception | None = None
         for attempt in range(3):
             try:
-                response = session.post(url, json=payload, timeout=180)
-            except RequestException as exc:
+                response = client.models.generate_content(
+                    model=self.settings.gemini_image_model,
+                    contents=[source_image, prompt],
+                    config=GenerateContentConfig(
+                        response_modalities=[Modality.TEXT, Modality.IMAGE],
+                        candidate_count=1,
+                        temperature=0.6,
+                        top_p=0.95,
+                    ),
+                )
+            except Exception as exc:
                 last_error = VertexImagenError("gemini_request_failed", str(exc))
                 logger.warning(
                     "gemini_image_transport_failed attempt=%s model=%s message=%s",
                     attempt + 1,
-                    model,
+                    self.settings.gemini_image_model,
                     str(exc)[:500],
                 )
                 time.sleep(2**attempt)
                 continue
-            if response.ok:
-                body = response.json()
-                encoded = self._extract_gemini_inline_image(body)
-                if encoded:
-                    return base64.b64decode(encoded)
-                logger.warning(
-                    "gemini_image_response_parse_failed model=%s body=%s",
-                    model,
-                    json.dumps(body)[:1000].replace("\n", " "),
-                )
-                raise VertexImagenError("gemini_bad_response", "Gemini did not return image bytes.")
 
-            response_excerpt = response.text[:1000].replace("\n", " ")
-            last_error = VertexImagenError("gemini_request_failed", response_excerpt)
+            encoded = self._extract_gemini_inline_image(response)
+            if encoded:
+                return base64.b64decode(encoded)
+
+            body = response.model_dump(mode="json") if hasattr(response, "model_dump") else response
             logger.warning(
-                "gemini_image_request_failed attempt=%s status_code=%s model=%s body=%s",
-                attempt + 1,
-                response.status_code,
-                model,
-                response_excerpt,
+                "gemini_image_response_parse_failed model=%s body=%s",
+                self.settings.gemini_image_model,
+                json.dumps(body)[:1000].replace("\n", " "),
             )
+            last_error = VertexImagenError("gemini_bad_response", "Gemini did not return image bytes.")
             time.sleep(2**attempt)
 
         raise last_error or VertexImagenError("gemini_request_failed", "Gemini image request failed.")
